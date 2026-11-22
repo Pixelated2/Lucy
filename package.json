@@ -1,0 +1,19 @@
+{
+  "name": "lucy-locates",
+  "version": "1.0.0",
+  "description": "Lucy Locates — barcode-driven lab sample inventory with multi-user sync",
+  "type": "module",
+  "private": true,
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server/server.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch server/server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "@zxing/library": "0.21.3"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "Lucy Locates",
+  "short_name": "Lucy Locates",
+  "description": "Barcode lab sample inventory: receive, rack, and locate samples instantly.",
+  "id": "./",
+  "start_url": "./#/find",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "any",
+  "background_color": "#f3f5f8",
+  "theme_color": "#1f4e79",
+  "categories": ["medical", "productivity", "business"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Find sample", "url": "./#/find", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Receive samples", "url": "./#/receive", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Racks", "url": "./#/racks", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}
