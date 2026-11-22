@@ -1,0 +1,18 @@
+@DOMAIN@ {
+	# Compress everything except the live-sync stream.
+	@compressible not path /api/stream
+	encode @compressible zstd gzip
+
+	reverse_proxy 127.0.0.1:8080 {
+		# Deliver live-sync events immediately.
+		flush_interval -1
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(self), microphone=(), geolocation=()"
+		X-Frame-Options "DENY"
+		-Server
+	}
+}

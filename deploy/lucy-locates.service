@@ -1,0 +1,29 @@
+[Unit]
+Description=Lucy Locates lab sample tracker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lucy
+Group=lucy
+EnvironmentFile=/etc/lucy-locates.env
+WorkingDirectory=/opt/lucy-locates
+ExecStart=@NODE@ --disable-warning=ExperimentalWarning server/server.js
+Restart=always
+RestartSec=3
+
+# Hardening: the app can only write to its data folder.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/lucy-locates
+
+[Install]
+WantedBy=multi-user.target

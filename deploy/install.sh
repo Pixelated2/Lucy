@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# Install or update Lucy Locates on a Google Cloud (Compute Engine) VM running Debian or Ubuntu.
+#
+# Run from the project folder on the VM:
+#   sudo bash deploy/install.sh                       # HTTPS at <your-ip>.sslip.io (no domain needed)
+#   sudo bash deploy/install.sh --domain lucy.example.org
+#   sudo bash deploy/install.sh --access-code LAB2026  # require a lab access code
+#
+# Safe to run again: re-running updates the app and keeps the database and settings.
+set -euo pipefail
+
+DOMAIN=""; ACCESS_CODE=""; EMAIL=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --domain) DOMAIN="${2:?}"; shift 2 ;;
+    --access-code) ACCESS_CODE="${2:?}"; shift 2 ;;
+    --email) EMAIL="${2:?}"; shift 2 ;;
+    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    *) echo "Unknown option: $1 (try --help)" >&2; exit 1 ;;
+  esac
+done
+
+[[ $EUID -eq 0 ]] || { echo "Please run with sudo." >&2; exit 1; }
+# shellcheck disable=SC1091
+. /etc/os-release
+[[ "$ID" == debian || "$ID" == ubuntu || "${ID_LIKE:-}" == *debian* ]] || { echo "This script supports Debian and Ubuntu VMs." >&2; exit 1; }
+if [[ -n "$ACCESS_CODE" && ! "$ACCESS_CODE" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "Access code may only use letters, numbers, dot, dash and underscore." >&2; exit 1
+fi
+
+SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+APP=/opt/lucy-locates
+DATA=/var/lib/lucy-locates
+ENVF=/etc/lucy-locates.env
+BACKUPS=/var/backups/lucy-locates
+export DEBIAN_FRONTEND=noninteractive
+
+log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
+envget() { [[ -f "$ENVF" ]] && grep -E "^$1=" "$ENVF" | tail -n1 | cut -d= -f2- || true; }
+envset() { # envset KEY VALUE
+  touch "$ENVF"; grep -vE "^$1=" "$ENVF" > "$ENVF.tmp" || true
+  printf '%s=%s\n' "$1" "$2" >> "$ENVF.tmp"; mv "$ENVF.tmp" "$ENVF"
+}
+
+log "Installing system packages"
+apt-get update -y
+apt-get install -y curl ca-certificates gnupg rsync sqlite3
+
+need_node=1
+if command -v node >/dev/null 2>&1; then
+  IFS=. read -r maj min _ <<<"$(node -p 'process.versions.node')"
+  if (( maj > 22 || (maj == 22 && min >= 13) )); then need_node=0; fi
+fi
+if (( need_node )); then
+  log "Installing Node.js 22"
+  install -d -m 0755 /etc/apt/keyrings
+  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
+  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+  apt-get update -y && apt-get install -y nodejs
+fi
+NODE_BIN="$(command -v node)"
+echo "Node $("$NODE_BIN" -v) at $NODE_BIN"
+
+if ! command -v caddy >/dev/null 2>&1; then
+  log "Installing Caddy (web server with automatic HTTPS)"
+  curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt > /etc/apt/sources.list.d/caddy-stable.list
+  apt-get update -y && apt-get install -y caddy
+fi
+
+log "Choosing the web address"
+[[ -n "$DOMAIN" ]] || DOMAIN="$(envget LUCY_DOMAIN)"
+if [[ -z "$DOMAIN" ]]; then
+  IP="$(curl -fs -H 'Metadata-Flavor: Google' \
+    http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip || true)"
+  [[ -n "$IP" ]] || IP="$(curl -fs https://api.ipify.org || true)"
+  [[ -n "$IP" ]] || { echo "Could not find this VM's external IP. Re-run with --domain your.domain" >&2; exit 1; }
+  DOMAIN="${IP//./-}.sslip.io"
+fi
+echo "Address: https://$DOMAIN"
+
+log "Creating service account, folders and settings"
+id lucy >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --shell /usr/sbin/nologin lucy
+install -d -o lucy -g lucy -m 0750 "$DATA"
+install -d -o root -g root -m 0750 "$BACKUPS"
+if [[ ! -f "$ENVF" ]]; then
+  printf 'PORT=8080\nHOST=127.0.0.1\nLUCY_DB=%s/lucy.db\nLUCY_ACCESS_CODE=\n' "$DATA" > "$ENVF"
+fi
+envset LUCY_DOMAIN "$DOMAIN"
+[[ -z "$ACCESS_CODE" ]] || envset LUCY_ACCESS_CODE "$ACCESS_CODE"
+chown root:lucy "$ENVF"; chmod 0640 "$ENVF"
+
+log "Copying the app to $APP"
+install -d -m 0755 "$APP"
+rsync -a --delete --exclude .git --exclude node_modules --exclude data "$SRC/" "$APP/"
+(cd "$APP" && npm ci --omit=dev --no-audit --no-fund)
+chown -R root:root "$APP"
+
+log "Setting up the app service and daily backups"
+sed "s#@NODE@#$NODE_BIN#" "$APP/deploy/lucy-locates.service" > /etc/systemd/system/lucy-locates.service
+install -m 0755 "$APP/deploy/backup.sh" /usr/local/sbin/lucy-locates-backup
+cp "$APP/deploy/lucy-locates-backup.service" "$APP/deploy/lucy-locates-backup.timer" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable lucy-locates.service lucy-locates-backup.timer >/dev/null
+systemctl restart lucy-locates.service
+systemctl start lucy-locates-backup.timer
+
+log "Configuring HTTPS"
+if [[ -f /etc/caddy/Caddyfile ]] && ! grep -q 'Lucy Locates' /etc/caddy/Caddyfile; then
+  cp /etc/caddy/Caddyfile "/etc/caddy/Caddyfile.before-lucy.$(date +%s)"
+fi
+{
+  echo "# Lucy Locates — generated by deploy/install.sh"
+  if [[ -n "$EMAIL" ]]; then printf '{\n\temail %s\n}\n\n' "$EMAIL"; fi
+  sed "s#@DOMAIN@#$DOMAIN#" "$APP/deploy/Caddyfile"
+} > /etc/caddy/Caddyfile
+caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
+systemctl enable caddy >/dev/null
+systemctl reload caddy 2>/dev/null || systemctl restart caddy
+
+log "Checking the app"
+for _ in $(seq 1 20); do
+  if curl -fs http://127.0.0.1:8080/api/health >/dev/null; then ok=1; break; fi
+  sleep 1
+done
+if [[ "${ok:-0}" != 1 ]]; then
+  echo "The app did not start. Recent log:" >&2
+  journalctl -u lucy-locates -n 30 --no-pager >&2
+  exit 1
+fi
+
+cat <<EOF
+
+  Lucy Locates is running.
+
+  Open:  https://$DOMAIN
+  (The HTTPS certificate is issued on first visit; it can take up to a minute.
+   Ports 80 and 443 must be open in the Google Cloud firewall — see deploy/DEPLOY.md.)
+
+  Access code:   $( [[ -n "$(envget LUCY_ACCESS_CODE)" ]] && echo "required (set in $ENVF)" || echo "none — anyone with the link can use it" )
+  Database:      $DATA/lucy.db
+  Backups:       $BACKUPS (daily, kept 30 days)
+  Logs:          sudo journalctl -u lucy-locates -f
+EOF

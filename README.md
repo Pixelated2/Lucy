@@ -41,6 +41,10 @@ Runs on **Android, iPhone/iPad, Windows and Chromebook** as an installable app (
 - Connected devices receive changes immediately (server-sent events), with a 30-second fallback poll.
 - The server is authoritative, and retried uploads are never applied twice. If two offline users put different samples in the same slot, the second sample is recorded in the next free slot and that user gets a **slot conflict** alert telling them where to move the tube.
 
+## Hosting on Google Cloud
+
+See **[deploy/DEPLOY.md](deploy/DEPLOY.md)**. One script (`sudo bash deploy/install.sh`) sets up the app, HTTPS, auto-start and nightly backups on a Debian/Ubuntu VM.
+
 ## Running the server
 
 Needs Node.js 22.13 or newer. There's no separate database to install (it uses the SQLite built into Node).

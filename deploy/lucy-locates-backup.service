@@ -1,0 +1,7 @@
+[Unit]
+Description=Back up the Lucy Locates database
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/lucy-locates.env
+ExecStart=/usr/local/sbin/lucy-locates-backup
